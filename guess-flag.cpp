@@ -17,15 +17,16 @@ const string website = "https://flagcdn.com",
 const fs::path cacheDirectory("~/Code/Projects/Flag\\ Guesser/Cache");
 
 struct Data {
-    CURL* connection; CURLcode responseCode; 
-    string rawResponse; // json parsedResponse;
+    CURL* connection; CURLcode responseCode;
+    string rawResponse;
 
     static size_t dataProcessing(void *more, size_t size, size_t amount, string* current) noexcept {
         size_t processed = size * amount;
         try {
             current->append(static_cast<char*>(more), processed);
             return processed;
-        } catch (const bad_alloc& e) {
+        } 
+        catch (const bad_alloc& e) {
             cerr << E << e.what() << endl;
             return 0;
         }
@@ -49,7 +50,9 @@ struct Data {
         return true;
     }
     json getCountryCodes() {
-        const string title = "codes.json"; ofstream file(cacheDirectory + "/" + title, ios::out); json parsedResponse;
+        const string title = "codes.json", 
+                     path = cacheDirectory.string() + "/" + title; 
+        ofstream file(path, ios::out); json parsedResponse;
         if (fs::exists(file)) {
             ifstream content(file); string temp; while(getline(content, temp));
             try {
@@ -173,15 +176,15 @@ struct Round {
 
     
   }
-  // ~Round() {
-  //   std::error_code e; uintmax_t filesDeleted;
-  //   if (clearCache && filesDeleted = fs::remove_all(cacheDirectory, e)) cerr << E << "Encountered Attempting To Recursively Delete Directory" 
-  //                                                                            << cacheDirectory << endl 
-  //                                                                            << e.message() << endl;
-  //   else if (clearCreated && image && !fs::remove(image, e)) cerr << E << "Encountered Attempting To Delete " 
-  //                                                                  << *image << endl 
-  //                                                                  << e.message() << endl;
-  // }
+  //* ~Round() {
+  //*   std::error_code e; uintmax_t filesDeleted;
+  //*   if (clearCache && filesDeleted = fs::remove_all(cacheDirectory, e)) cerr << E << "Encountered Attempting To Recursively Delete Directory" 
+  //*                                                                            << cacheDirectory << endl 
+  //*                                                                            << e.message() << endl;
+  //*   else if (clearCreated && image && !fs::remove(image, e)) cerr << E << "Encountered Attempting To Delete " 
+  //*                                                                  << *image << endl 
+  //*                                                                  << e.message() << endl;
+  //* }
 }
 class Game {
     size_t roundsPlayed = 0, 
@@ -201,7 +204,7 @@ class Game {
 
         // open flag image
         sf::RenderWindow w(sf::VideoMode(800, 600), "Flag #" + to_string((roundsPlayed + 1)));
-        sf::Texture t; if (!t.loadFromFile(round->image)) throw runtime_error("Unable To Load Flag Image") 
+        sf::Texture t; if (!t.loadFromFile(round->image)) throw runtime_error("Unable To Load Flag Image");
         sf::Sprite s(t);
         while (w.isOpen()) {
             while (const auto e = w.pollEvent()) {
