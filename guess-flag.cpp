@@ -1,234 +1,335 @@
-#include <string>
-#include <fstream>
-#include <iostream>
-#include <stdexcept>
-#include <filesystem>
-#include "random.hpp"
-#include <curl/curl.h>
-#include "nlohmann/json.hpp"
-#include <SFML/Graphics.hpp>
+//§ Includes
+    #include <cctype>
+    #include <cstdlib>
+    #include <iterator>
+    #include <optional>
+    #include <string>
+    #include <fstream>
+    #include <iostream>
+    #include <stdexcept>
+    #include <filesystem>
+    #include <sstream>
+    #include "random.hpp"
+    #include "wait.hpp"
+    #include "screen.hpp"
+    #include <curl/curl.h>
+    #include "nlohmann/json.hpp"
+    #include <pwd.h>
+    #include <unistd.h>
 
-using namespace std;
-using json = nlohmann::json;
-namespace fs = filesystem;
+//.
+//§ Shortucts
+    using namespace std;
+    using json = nlohmann::json;
+    namespace fs = filesystem;
+//.
+//§ Constants
+    const string website = "https://flagcdn.com", 
+                    E = "❌ ERROR: ",
+                    C = "  ➡︎ Choice: ";
+    const fs::path cacheDirectory([]{
+        string fullPath = [] -> fs::path {
+            if (const char* home = getenv("HOME")) return home;
+            if (struct passwd* pw = getpwuid(getuid())) return pw->pw_dir;
 
-const string website = "https://flagcdn.com", 
-                   E = "❌ ERROR: ";
-const fs::path cacheDirectory("~/Code/Projects/Flag\\ Guesser/Cache");
+            throw runtime_error("Unable to determine home directory");
+        }(); 
+        clog << "The HOME Env Is: " << fullPath << endl;
+        fullPath += "/Code/Projects/Flag Guesser/Cache";
+        clog << "Constructed cacheDirectory is: " << fullPath << endl;
 
-struct Data {
-    CURL* connection; CURLcode responseCode;
-    string rawResponse;
+        return fs::path(fullPath);
+    }());
+//.
+//§ Classes
+    struct Data {
+        //§ Variables
+        CURL* connection; CURLcode responseCode;
+        string rawResponse = "";
+        //.
 
-    static size_t dataProcessing(void *more, size_t size, size_t amount, string* current) noexcept {
-        size_t processed = size * amount;
-        try {
-            current->append(static_cast<char*>(more), processed);
-            return processed;
-        } 
-        catch (const bad_alloc& e) {
-            cerr << E << e.what() << endl;
-            return 0;
-        }
-    }
-    Data() {
-        curl_global_init(CURL_GLOBAL_DEFAULT); connection = curl_easy_init();
-        if (connection) clog << "✅ Curl Connection Established" << endl;
-        else            throw runtime_error("Unable To Establish Curl Connection");
-        curl_easy_setopt(connection, CURLOPT_WRITEFUNCTION, Data::dataProcessing);
-        curl_easy_setopt(connection, CURLOPT_WRITEDATA, &rawResponse);
-        curl_easy_setopt(connection, CURLOPT_FAILONERROR, 1L);
-        curl_easy_setopt(connection, CURLOPT_FOLLOWLOCATION, 1L);
-        clog << "✅ Curl Connection Configured" << endl;
-    }
-    bool performRequest() noexcept {
-        responseCode = curl_easy_perform(connection);
-        if (responseCode != CURLE_OK) {
-            cerr << E << curl_easy_strerror(responseCode) << endl;
-            return false;
-        }
-        return true;
-    }
-    json getCountryCodes() {
-        const string title = "codes.json", 
-                     path = cacheDirectory.string() + "/" + title; 
-        ofstream file(path, ios::out); json parsedResponse;
-        if (fs::exists(file)) {
-            ifstream content(file); string temp; while(getline(content, temp));
+        static size_t dataProcessing(void *more, size_t size, size_t amount, string* current) noexcept {
+            size_t processed = size * amount;
             try {
-                parsedResponse = json::parse(temp); clog << "✅ Cached Request Read" << endl;
-                return parsedResponse;
-            }
-            catch (const json::parse_error& e) {
-                cerr << E << e.what() << endl
-                     << "👀 Raw Data: " << endl << temp << endl;
-                throw runtime_error("Could Not Parse JSON");
-            }
-            catch (const json::other_error& e) {
-                cerr << E << e.what() << endl
-                     << "👀 Raw Data: " << endl << temp << endl;
-                throw runtime_error("Could Not Parse JSON");
-            }
-            catch (const json::type_error& e) {
-                cerr << E << e.what() << endl
-                     << "👀 Raw Data: " << endl << temp << endl;
-                throw runtime_error("Could Not Parse JSON");
+                current->append(static_cast<char*>(more), processed);
+                return processed;
+            } 
+            catch (const bad_alloc& e) {
+                cerr << E << e.what() << endl;
+                return 0;
             }
         }
-        else {
-            const string request = website + "/en/" + title;
-            curl_easy_setopt(connection, CURLOPT_URL, request.c_str());  clog << "✅ Curl Connection Reconfigured" << endl;
-            if (!performRequest()) throw runtime_error("Invalid Response Code Encountered");
-            try {
-                parsedResponse = json::parse(rawResponse); clog << "✅ Request Parsed" << endl;
-                file << parsedResponse.dump(2); clog << "✅ Saved Country Codes To Cache" << endl;
-                return parsedResponse;
-            }
-            catch (const json::parse_error& e) {
-                cerr << E << e.what() << endl
-                     << "👀 Raw Data: " << endl << rawResponse << endl;
-                throw runtime_error("Could Not Parse JSON");
-            }
-            catch (const json::other_error& e) {
-                cerr << E << e.what() << endl
-                     << "👀 Raw Data: " << endl << rawResponse << endl;
-                throw runtime_error("Could Not Parse JSON");
-            }
-            catch (const json::type_error& e) {
-                cerr << E << e.what() << endl
-                     << "👀 Raw Data: " << endl << rawResponse << endl;
-                throw runtime_error("Could Not Parse JSON");
-            }
+        static auto getRandomIterator(const json& JSON_Object) {
+            if (!JSON_Object.is_object())     throw runtime_error("Country Codes Are Not An Object");
+            if (JSON_Object.empty())          throw runtime_error("Country Codes Are Empty");
+
+            size_t randomIteratorMoveAmount = gen.generate<size_t>(0, (JSON_Object.size() - 1));
+            auto iterator = JSON_Object.begin(); advance(iterator, randomIteratorMoveAmount);
+            return iterator;
         }
-    }
-    fs::path getFlagImage() {
-        //! replace request with: 'website + RANDOM_COUNTRY_CODE + ".png"'
-        const string extension = ".png", 
-                     request = website + "/256x192/" + RANDOM_COUNTRY_CODE + extension;
-        fs::path     file(cacheDirectory + "/" + RANDOM_COUNTRY_CODE + extension); 
-        ofstream     content(file, ios::binary);
 
-        curl_easy_setopt(connection, CURLOPT_WRITEDATA, &content);
-        clog << "✅ Curl Connection Reconfigured" << endl;
-        curl_easy_setopt(connection, CURLOPT_URL, request.c_str()); if (!performRequest()) throw runtime_error("Invalid Response Code Encountered");
-        clog << "✅ Content Retrieved And Saved In: " << file << endl;
-        curl_easy_setopt(connection, CURLOPT_WRITEDATA, &rawResponse);
-        clog << "✅ Curl Connection Reconfigured" << endl;
-
-        return file;
-    }
-    ~Data() noexcept {
-        curl_global_cleanup(); curl_easy_cleanup(connection);
-        clog << "✅ Curl Connection Terminated" << endl;
-    }
-}
-struct Round {
-  fs::path image; string countryTitle, countryCode;
-  size_t amountOfChoices; static Data data; static const json codes = data.getCountryCodes();
-  // bool clearCreated = false, 
-  //      clearCache = false;
-  
-  Round(const size_t& choices) : amountOfChoices{choices} {
-    try {
-        image = data.getFlagImage();
-        countryTitle = codes[RANDOM_COUNTRY_CODE];
-        countryCode = RANDOM_COUNTRY_CODE;
-    } catch (const runtime_error& e) {
-        cerr << E << "Unable To Start A Round, Since: " << e.what() << endl 
-             << "💥 Rethrowing Error" << endl;
-        throw e;
-    }
-  }
-  string displayRound () {
-    size_t correctAnswer = gen.generate<size_t>(1, amountOfChoices); string temp;
-    cout << "Possible Answers: " << endl;
-    for (size_t i = 0; i < amountOfChoices; ++i) 
-        cout << (i + 1) << ". " 
-             << ((i == correctAnswer) ? (codes[countryCode] + " (" + countryCode + ")") : (codes[RANDOM_COUNTRY_CODE] + " (" + RANDOM_COUNTRY_CODE + ")")) 
-             << endl;
-    cout << endl << " ➡︎ Choice: "; cin >> temp;
-    return temp;
-  }
-  bool correctGuess(const string&& userChoice) {
-     // if the input is from 1 to amountOfChoices OR if it is the country code OR the country title process it
-     // otherwise error
-     {
-        string number = ""; size_t n;
-        for (const auto& c : userChoice)
-            if (isdigit(c)) number += c;
-        try {
-            n = stoul(number);
-            if (n > amountOfChoices) throw runtime_error("Number Entered Is Too Large");
+        Data() {
+            curl_global_init(CURL_GLOBAL_DEFAULT); connection = curl_easy_init();
+            if (connection) clog << "✅ Curl Connection Established" << endl;
+            else            throw runtime_error("Unable To Establish Curl Connection");
+            curl_easy_setopt(connection, CURLOPT_WRITEFUNCTION, Data::dataProcessing);
+            curl_easy_setopt(connection, CURLOPT_WRITEDATA, &rawResponse);
+            curl_easy_setopt(connection, CURLOPT_FAILONERROR, 1L);
+            curl_easy_setopt(connection, CURLOPT_FOLLOWLOCATION, 1L);
+            clog << "✅ Curl Connection Configured" << endl;
         }
-        catch () {}
-        catch () {}
-        catch () {}
-    }
-    // find if key applicable
-    if (codes[userChoice])
-    // ...
-    // find if value applicable
-    for (const auto& v : codes)
-        if (v == userChoice)
-    // ...
+        bool performRequest() noexcept {
+            responseCode = curl_easy_perform(connection);
+            if (responseCode != CURLE_OK) {
+                cerr << E << curl_easy_strerror(responseCode) << endl;
+                return false;
+            }
+            return true;
+        }
+        json getCountryCodes() {
+            const string title = "codes.json"; json parsedResponse; 
+            fs::path pathToFile = cacheDirectory.string() + "/" + title; 
+            
+            if (!fs::exists(cacheDirectory)) fs::create_directories(cacheDirectory);
+            if (fs::exists(pathToFile)) {
+                ifstream fileContent(pathToFile); string rawContent = "";
 
-    
-
-    
-  }
-  //* ~Round() {
-  //*   std::error_code e; uintmax_t filesDeleted;
-  //*   if (clearCache && filesDeleted = fs::remove_all(cacheDirectory, e)) cerr << E << "Encountered Attempting To Recursively Delete Directory" 
-  //*                                                                            << cacheDirectory << endl 
-  //*                                                                            << e.message() << endl;
-  //*   else if (clearCreated && image && !fs::remove(image, e)) cerr << E << "Encountered Attempting To Delete " 
-  //*                                                                  << *image << endl 
-  //*                                                                  << e.message() << endl;
-  //* }
-}
-class Game {
-    size_t roundsPlayed = 0, 
-           correctGuesses = 0,
-           amountOfOptions = 3;
-    Round** currentRound;
-    Game() {
-
-    }
-    Game& displayInterface () {
-
-        return *this;
-    }
-    void playRound() {
-        ++roundsPlayed; amountOfOptions = (((roundsPlayed / 5) >= 1) ? ((roundsPlayed / 5) + 2) : 3);
-        Round* round = new Round(amountOfOptions); currentRound = &round;
-
-        // open flag image
-        sf::RenderWindow w(sf::VideoMode(800, 600), "Flag #" + to_string((roundsPlayed + 1)));
-        sf::Texture t; if (!t.loadFromFile(round->image)) throw runtime_error("Unable To Load Flag Image");
-        sf::Sprite s(t);
-        while (w.isOpen()) {
-            while (const auto e = w.pollEvent()) {
-                if (e->is<sf::Event::Closed>()) w.close();
-                if (const auto* k = e->getIf<sf::Event::KeyPressed>()) {
-                    if (k->code == sf::Keyboard::Key::Escape) w.close();
+                if (!fileContent.is_open()) throw runtime_error("Could Not Open " + pathToFile.string());
+                try {
+                    fileContent >> parsedResponse; clog << "✅ Cached Request Read" << endl;
+                    fileContent.close(); return parsedResponse;
+                }
+                catch (const json::parse_error& e) {
+                    cerr << E << e.what() << endl
+                         << "👀 Raw Data: " << endl << rawContent << endl;
+                    fileContent.close(); throw runtime_error("Could Not Parse JSON");
+                }
+                catch (const json::other_error& e) {
+                    cerr << E << e.what() << endl
+                         << "👀 Raw Data: " << endl << rawContent << endl;
+                    fileContent.close(); throw runtime_error("Could Not Parse JSON");
+                }
+                catch (const json::type_error& e) {
+                    cerr << E << e.what() << endl
+                         << "👀 Raw Data: " << endl << rawContent << endl;
+                    fileContent.close(); throw runtime_error("Could Not Parse JSON");
                 }
             }
-            w.clear(); w.draw(s); w.display();
+            else {
+                const string request = website + "/en/" + title; ofstream fileContent(pathToFile, ios::out);
+
+                curl_easy_setopt(connection, CURLOPT_URL, request.c_str());  clog << "✅ Curl Connection Reconfigured" << endl;
+                if (!performRequest())       throw runtime_error("Invalid Response Code Encountered");
+                 if (!fileContent.is_open()) throw runtime_error("Could Not Open " + pathToFile.string()); 
+                try {
+                    parsedResponse = json::parse(rawResponse); clog << "✅ Request Parsed" << endl;
+                    fileContent << parsedResponse.dump(2); clog << "✅ Saved Country Codes To Cache" << endl;
+                    fileContent.close(); return parsedResponse;
+                }
+                catch (const json::parse_error& e) {
+                    cerr << E << e.what() << endl
+                         << "👀 Raw Data: " << endl << rawResponse << endl;
+                    fileContent.close(); throw runtime_error("Could Not Parse JSON");
+                }
+                catch (const json::other_error& e) {
+                    cerr << E << e.what() << endl
+                         << "👀 Raw Data: " << endl << rawResponse << endl;
+                    fileContent.close(); throw runtime_error("Could Not Parse JSON");
+                }
+                catch (const json::type_error& e) {
+                    cerr << E << e.what() << endl
+                         << "👀 Raw Data: " << endl << rawResponse << endl;
+                    fileContent.close(); throw runtime_error("Could Not Parse JSON");
+                }
+            }
         }
-        // display (5) options // get input // acess input
-        if (round->correctGuess(round->displayRound())) ++correctGuesses;
+        fs::path getFlagImage(optional<string> countryCode = nullopt) {
+            if (!countryCode) countryCode = Data::getRandomIterator(getCountryCodes()).key();
+            const string extension = ".svg", request = website + "/" + *countryCode + extension; 
+            fs::path file([&]{
+                clog << "Saving To Directory: " << cacheDirectory << endl;
+                string fullPath = cacheDirectory.string() + "/" + *countryCode + extension;
+                clog << "Saving File To: " << fullPath << endl;
+                return fullPath;
+            }());
 
-        delete round; currentRound = nullptr;
+            if (!fs::exists(file)) {
+                ofstream content(file, ios::trunc); rawResponse = "";
+
+                clog << "Making Request: " << request << endl;
+                curl_easy_setopt(connection, CURLOPT_URL, request.c_str()); if (!performRequest()) throw runtime_error("Invalid Response Code Encountered");
+                clog << "✅ Content Retrieved " << rawResponse << endl;
+
+                if (!content.is_open()) throw runtime_error("Could Not Open " + file.string());
+                content << rawResponse; clog << "✅ Content Written To " << file << endl;
+                content.close();
+
+            }
+            return file;
+        }
+        ~Data() noexcept {
+            curl_global_cleanup(); curl_easy_cleanup(connection);
+            clog << "✅ Curl Connection Terminated" << endl;
+        }
+    };
+    struct Round {
+        //§ Variables
+            struct Helpers {
+                static Data data;
+                const json& countryCodes() {
+                    static json codes = data.getCountryCodes();
+                    return codes;
+                }
+                // inline static const json countryCodes = data.getCountryCodes();
+            } helpers;
+            struct {
+                size_t amountOfChoices;
+                bool clearCreated = false, clearCache = false; // TODO Add Ways Of Setting This
+            } roundInfo;
+            struct {
+            fs::path image; 
+            string countryTitle, countryCode;
+            } answerInfo;
+        //.
+        
+        Round(const size_t& choices) : roundInfo{.amountOfChoices = choices} {
+            try {
+                const auto randomCode = Data::getRandomIterator(helpers.countryCodes());
+                answerInfo.image = helpers.data.getFlagImage(randomCode.key());
+                answerInfo.countryTitle = randomCode.value();
+                answerInfo.countryCode = randomCode.key();
+            } 
+            catch (const runtime_error& e) {
+                cerr << E << "Unable To Start A Round, Since: " << e.what() << endl 
+                     << "💥 Rethrowing Error" << endl;
+                throw e;
+            }
+        }
+        string displayOptionsAndGetValidAnswer () noexcept {
+            size_t correctAnswer = gen.generate<size_t>(0, roundInfo.amountOfChoices);
+            stringstream choiceOptions; string userChoice; vector<json::const_iterator> answerOptions = {};
+
+            cout << "Possible Answers: " << endl;
+            for (size_t i = 0; i < roundInfo.amountOfChoices; ++i) {
+                const auto randomCountry = Data::getRandomIterator(helpers.countryCodes()); answerOptions.push_back(randomCountry);
+                choiceOptions << (i + 1) << ". " << ((i == correctAnswer) ? 
+                                            (answerInfo.countryTitle + " (" + answerInfo.countryCode + ")") : 
+                                            (to_string(randomCountry.value()) + " (" + randomCountry.key() + ")")) // randomCountry.value() should already be a string
+                                            << endl;                                                                 // but clangd gives a warning otherwise ¯\ _(ツ)_ /¯
+            } choiceOptions << endl << C; 
+            
+            do {
+                userChoice = "";
+                cout << choiceOptions.str(); cin >> userChoice;
+            } while (![&] -> bool {
+                bool validInput = false;
+
+                // 1. Input Is A Country Code OR 2. Input Is A Country Title
+                for (const auto& o : answerOptions) if (userChoice == o.key() || userChoice == to_string(o.value())) validInput = true;
+                // 3. Input Is a Number (Index From 1 to amountOfChoices)
+                string tempStorage = ""; size_t constructedNumber;
+                for (const auto& c : userChoice) if (isdigit(c)) tempStorage.push_back(c);
+                try {
+                    constructedNumber = stoul(tempStorage);
+                    if (constructedNumber <= roundInfo.amountOfChoices) validInput = true;
+                } catch (...) {}
+
+                if (!validInput) {
+                    cout << endl << "❌ Invalid Input Entered" << endl;
+                    wait(3); clearScreen();
+                }
+                return validInput;
+            }());
+            return userChoice;
+        }
+        bool correctGuess(const string&& choice) noexcept {
+            if (answerInfo.countryCode == choice || answerInfo.countryTitle == choice)                                                      return true;
+
+            auto objectIndex = helpers.countryCodes().begin(); optional<size_t> advanceBy = nullopt;
+            try {
+                advanceBy = stoul(choice);
+                advance(objectIndex, *advanceBy); 
+            } catch (...) { cerr << E << "Invalid Index Passed" << endl; }
+
+            if (advanceBy && (answerInfo.countryCode == objectIndex.key() || answerInfo.countryTitle == to_string(objectIndex.value())))   return true;
+            
+            return false;
+        }
+         ~Round() {
+           error_code e; uintmax_t filesDeleted; char temp;
+            
+           if (roundInfo.clearCreated) {
+            cout << "Are You Sure You Want To Delete " << answerInfo.image << " (y/n)" << endl << C; cin >> temp;
+            if (temp == 'y') {
+                if (!fs::remove(answerInfo.image, e) && e) cerr << E << "Failed To Delete, Since: " << e.message() << endl;
+                else clog << "✅ Successfully Deleted " << answerInfo.image << endl;
+            }
+           } 
+           else if (roundInfo.clearCache) {
+                cout << "Are You Sure You Want To Delete The Entire Contents Of Your Cache? (y/n)" << endl << C; cin >> temp;
+                if (temp == 'y') filesDeleted = fs::remove_all(cacheDirectory, e);
+                cout << "Removed " << filesDeleted << "Items From " << cacheDirectory << endl;
+            }
+            clog << "✅ Round Over" << endl;
+         }
+    }; Data Round::Helpers::data;
+    struct Game {
+        size_t roundsPlayed = 0, 
+               correctGuesses = 0,
+               amountOfOptions = 3;
+        Round** currentRound;
+        Game() {
+
+        }
+        Game& displayInterface () {
+
+            return *this;
+        }
+        void playRound() { ++roundsPlayed; 
+            amountOfOptions = (((roundsPlayed / 5) >= 1) ? ((roundsPlayed / 5) + 2) : 3);
+            Round* round = new Round(amountOfOptions); currentRound = &round;
+
+            // open flag image
+            string command = "code ", //? use code/open as the command
+                   path = round->answerInfo.image;
+            command += [&] -> string {
+                for (size_t i = 0; i < path.size(); ++i)
+                    if (isspace(path.at(i))) 
+                        path.insert((path.begin() + i++), '\\');
+                return path;
+            }();
+            clog << endl << "Running Command: " << command << endl;
+            system(command.c_str());
+            /*
+            sf::RenderWindow w(sf::VideoMode({800, 600}), "Flag #" + to_string((roundsPlayed + 1)));
+            sf::Texture t; if (!t.loadFromFile(round->answerInfo.image)) throw runtime_error("Unable To Load Flag Image");
+            sf::Sprite s(t);
+            while (w.isOpen()) {
+                while (const auto e = w.pollEvent()) {
+                    if (e->is<sf::Event::Closed>()) w.close();
+                    if (const auto* k = e->getIf<sf::Event::KeyPressed>()) {
+                        if (k->code == sf::Keyboard::Key::Escape) w.close();
+                    }
+                }
+                w.clear(); w.draw(s); w.display();
+            }
+            */
+            // display (5) options // get input // acess input
+            if (round->correctGuess(round->displayOptionsAndGetValidAnswer())) ++correctGuesses;
+            else 
+
+            delete round; currentRound = nullptr;
+        }
+        ~Game() {
+            // free memory
+        }
+
+    };
+//.
+//§ Main Loop
+    int main() {
+        Game g;
+        while (true) g.displayInterface().playRound();
+        return 0;
     }
-    ~Game() {
-        // free memory
-    }
-
-}
-
-
-int main() { // int argc, char** args) {
-    Game g;
-    while (true) g.displayInterface().playRound();
-    return 0;
-}
+//.
