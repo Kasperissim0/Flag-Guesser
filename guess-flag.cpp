@@ -49,7 +49,7 @@
         string rawResponse = "";
         //.
 
-        static size_t dataProcessing(void *more, size_t size, size_t amount, string* current) noexcept {
+        static size_t API_StringProcessing(void *more, size_t size, size_t amount, string* current) noexcept {
             size_t processed = size * amount;
             try {
                 current->append(static_cast<char*>(more), processed);
@@ -65,14 +65,14 @@
             if (JSON_Object.empty())          throw runtime_error("Country Codes Are Empty");
 
             size_t randomIteratorMoveAmount = gen.generate<size_t>(0, (JSON_Object.size() - 1));
-            auto iterator = JSON_Object.begin(); advance(iterator, randomIteratorMoveAmount);
+            auto iterator = JSON_Object.cbegin(); advance(iterator, randomIteratorMoveAmount);
             return iterator;
         }
 
         Data() {
             curl_global_init(CURL_GLOBAL_DEFAULT); connection = curl_easy_init();
             if (!connection) throw runtime_error("Unable To Establish Curl Connection");
-            curl_easy_setopt(connection, CURLOPT_WRITEFUNCTION, Data::dataProcessing);
+            curl_easy_setopt(connection, CURLOPT_WRITEFUNCTION, Data::API_StringProcessing);
             curl_easy_setopt(connection, CURLOPT_WRITEDATA, &rawResponse);
             curl_easy_setopt(connection, CURLOPT_FAILONERROR, 1L);
             curl_easy_setopt(connection, CURLOPT_FOLLOWLOCATION, 1L);
@@ -119,10 +119,9 @@
 
                 curl_easy_setopt(connection, CURLOPT_URL, request.c_str());
                 if (!performRequest())       throw runtime_error("Invalid Response Code Encountered");
-                 if (!fileContent.is_open()) throw runtime_error("Could Not Open " + pathToFile.string()); 
+                if (!fileContent.is_open())  throw runtime_error("Could Not Open " + pathToFile.string()); 
                 try {
-                    parsedResponse = json::parse(rawResponse);
-                    fileContent << parsedResponse.dump(2);
+                    parsedResponse = json::parse(rawResponse); fileContent << parsedResponse.dump(2);
                     fileContent.close(); return parsedResponse;
                 }
                 catch (const json::parse_error& e) {
@@ -150,10 +149,10 @@
             if (!fs::exists(file)) {
                 ofstream content(file, ios::trunc); rawResponse = "";
 
-                curl_easy_setopt(connection, CURLOPT_URL, request.c_str()); if (!performRequest()) throw runtime_error("Invalid Response Code Encountered");
+                curl_easy_setopt(connection, CURLOPT_URL, request.c_str()); 
+                if (!performRequest())  throw runtime_error("Invalid Response Code Encountered");
                 if (!content.is_open()) throw runtime_error("Could Not Open " + file.string());
-                content << rawResponse;
-                content.close();
+                content << rawResponse; content.close();
 
             }
             return file;
@@ -166,28 +165,25 @@
         //§ Variables
             struct Helpers {
                 static Data data;
+                // // inline static const json countryCodes = data.getCountryCodes();
                 const json& countryCodes() {
                     static json codes = data.getCountryCodes();
                     return codes;
                 }
-                // inline static const json countryCodes = data.getCountryCodes();
             } helpers;
-            struct {
-                size_t amountOfChoices;
-                bool clearCreated = true, clearCache = false; // TODO Add Ways Of Setting This
-            } roundInfo;
-            struct {
-            fs::path image; 
-            string countryTitle, countryCode;
-            } answerInfo;
+                fs::path image;       string countryTitle = "", 
+                                             countryCode = "";
+                size_t amountOfChoices; bool clearCreated = true, 
+                                             clearCache = false; // TODO Add Ways Of Setting This
+                vector<UserAnswer> answerOptions = {};
         //.
         
-        Round(const size_t& choices) : roundInfo{.amountOfChoices = choices} {
-            try {
+        Round(const size_t& choices) : amountOfChoices{choices} {
+            try { for (size_t i = 0; i < amountOfChoices; ++i) answerOptions.push_back({"", ""});
                 const auto randomCode = Data::getRandomIterator(helpers.countryCodes());
-                answerInfo.image = helpers.data.getFlagImage(randomCode.key());
-                answerInfo.countryTitle = randomCode.value().get<string>();
-                answerInfo.countryCode = randomCode.key();
+                image = helpers.data.getFlagImage(randomCode.key());
+                countryTitle = randomCode.value().get<string>();
+                countryCode = randomCode.key();
             } 
             catch (const runtime_error& e) {
                 cerr << E << "Unable To Start A Round, Since: " << e.what() << endl 
@@ -196,18 +192,18 @@
             }
         }
         string displayOptionsAndGetValidAnswer () noexcept {
-            size_t correctAnswer = gen.generate<size_t>(1, roundInfo.amountOfChoices);
-            stringstream choiceOptions; string userChoice; vector<UserAnswer> answerOptions(roundInfo.amountOfChoices);
+            size_t correctAnswer = gen.generate<size_t>(1, amountOfChoices);
+            stringstream choiceOptions; string userChoice;
 
             choiceOptions << endl << "Possible Answers: " << endl;
-            for (size_t i = 0; i < roundInfo.amountOfChoices; ++i) {
+            for (size_t i = 1; i <= amountOfChoices; ++i) {
                 const auto randomCountry = Data::getRandomIterator(helpers.countryCodes());
-                const auto currentCode = ((i == correctAnswer) ? answerInfo.countryCode : randomCountry.key()),
-                           currentTitle = ((i == correctAnswer) ? answerInfo.countryTitle : randomCountry.value().get<string>());
+                const auto currentCode = ((i == correctAnswer) ? countryCode : randomCountry.key()),
+                           currentTitle = ((i == correctAnswer) ? countryTitle : randomCountry.value().get<string>());
 
                 // clog << "⚠️ Adding " << currentCode << " : " << currentTitle << endl;
-                answerOptions.at(i) = {currentCode, currentTitle};
-                choiceOptions << " " << to_string((i + 1)) << ". " 
+                answerOptions.at(i - 1) = {currentCode, currentTitle};
+                choiceOptions << " " << to_string((i)) << ". " 
                               << currentTitle << " (" << currentCode << ")" << endl;
             } choiceOptions   << endl << C;
             // clog << "⚠️ Amount Of Iterators Saved: " << answerOptions.size() << endl
@@ -222,16 +218,16 @@
 
                 // 1. Input Is A Country Code OR 2. Input Is A Country Title
                 //! for (const auto& u : answerOptions) if (userChoice == u.code || userChoice == u.name) validInput = true;
-                clog << "⚠️ User Input: " << userChoice << endl << endl;
+                // clog << "⚠️ User Input: " << userChoice << endl << endl;
                 for (const auto& u : answerOptions) {
-                    clog << "⚠️ Current JSON Value" << endl
-                         << "- " << u.code << " : " << u.name << endl;
+                    // clog << "⚠️ Current JSON Value" << endl
+                    //     << "- " << u.code << " : " << u.name << endl;
                     if (userChoice == u.code) {
-                        clog << "✅ Correct Input Since " << userChoice << " is equal to " << u.code << endl;
+                        // clog << "✅ Correct Input Since " << userChoice << " is equal to " << u.code << endl;
                         validInput = true; break;
                     }
                     if (userChoice == u.name) {
-                        clog << "✅ Correct Input Since " << userChoice << " is equal to " << u.name << endl;
+                        // clog << "✅ Correct Input Since " << userChoice << " is equal to " << u.name << endl;
                         validInput = true; break;
                     }
                 }
@@ -240,7 +236,7 @@
                 for (const auto& c : userChoice) if (isdigit(c)) tempStorage.push_back(c);
                 try {
                     constructedNumber = stoul(tempStorage);
-                    if (constructedNumber <= roundInfo.amountOfChoices) validInput = true;
+                    if (constructedNumber <= amountOfChoices) validInput = true;
                 } catch (...) {}
 
                 if (!validInput) {
@@ -249,58 +245,58 @@
                 }
                 return validInput;
             }());
-            clog << "✅ Returning Value: " << userChoice << endl;
+            // clog << "✅ Returning Value: " << userChoice << endl;
             return userChoice;
         }
         bool correctGuess(const string&& choice) noexcept {
-            clog << "⚠️ Processing User Guess: " << choice << endl << endl
-                 << "⚠️ Correct Answers Include: " << endl
-                 << "- " << answerInfo.countryCode << endl
-                 << "- " << answerInfo.countryTitle << endl
-                 << "- " << "1-" << (this->roundInfo.amountOfChoices - 1) << endl;
-            if (answerInfo.countryCode == choice || answerInfo.countryTitle == choice) {
-                clog << "✅ The Users Guess Was Correct" << endl;
+            // clog << "⚠️ Processing User Guess: " << choice << endl << endl
+            //      << "⚠️ Correct Answers Include: " << endl
+            //      << "- " << countryCode << endl
+            //      << "- " << countryTitle << endl
+            //      << "- " << "1-" << (amountOfChoices - 1) << endl;
+            if (countryCode == choice || countryTitle == choice) {
+                // clog << "✅ The Users Guess Was Correct" << endl;
                 return true;
             }
 
-            auto objectIndex = helpers.countryCodes().begin(); optional<size_t> advanceBy = nullopt;
+            size_t index;
             try {
-                advanceBy = stoul(choice);
-                advance(objectIndex, *advanceBy); 
-            } catch (...) { cerr << E << "Invalid Index Passed" << endl; }
-
-            if (advanceBy && (answerInfo.countryCode == objectIndex.key() || answerInfo.countryTitle == objectIndex.value().get<string>())) {
-                clog << "✅ The Users Guess Was Correct" << endl;
-                return true;
-            }
-            clog << "❌ The Users Guess Was NOT Correct" << endl;
-            return false;
-        }
-         ~Round() {
-           error_code e; uintmax_t filesDeleted; char temp;
-            
-            if (roundInfo.clearCreated) {
-           //  cout << "Are You Sure You Want To Delete " << answerInfo.image << " (y/n)" << endl << C; cin >> temp;
-           //  if (temp == 'y') {
-                if (!fs::remove(answerInfo.image, e) && e) cerr << E << "Failed To Delete, Since: " << e.message() << endl;
-                else cout << "✅ Successfully Deleted " << answerInfo.image << endl;
-           //  }
-            } 
-           else if (roundInfo.clearCache) {
-                cout << "Are You Sure You Want To Delete The Entire Contents Of Your Cache? (y/n)" << endl << C; cin >> temp;
-                if (temp == 'y') {
-                    filesDeleted = fs::remove_all(cacheDirectory, e);
-                    cout << "✅Removed " << filesDeleted << " Items From " << cacheDirectory << endl;
+                index = stoul(choice);
+                if (answerOptions.at((index - 1)).code == countryCode || answerOptions.at((index - 1)).name == countryTitle) {
+                    // clog << "✅ The Users Guess Was Correct" << endl;
+                    return true;
                 }
             }
-            cout << "✅ Round Over" << endl;
+            catch (...) { } // cerr << E << "Invalid Index Passed" << endl; }
+
+            // clog << "❌ The Users Guess Was NOT Correct" << endl;
+            return false;
+        }
+        ~Round() {
+           error_code e; uintmax_t filesDeleted; // char temp;
+            
+           if (clearCreated) {
+           //  cout << "Are You Sure You Want To Delete " << image << " (y/n)" << endl << C; cin >> temp;
+           //  if (temp == 'y') {
+                if (!fs::remove(image, e) && e) cerr << E << "Failed To Delete, Since: " << e.message() << endl;
+                // else clog  << "✅ Successfully Deleted " << image << endl;
+           //  }
+            } 
+           else if (clearCache) {
+            //  cout << "Are You Sure You Want To Delete The Entire Contents Of Your Cache? (y/n)" << endl << C; cin >> temp;
+            //  if (temp == 'y') {
+                 filesDeleted = fs::remove_all(cacheDirectory, e);
+                 // clog  << "✅ Removed " << filesDeleted << " Items From " << cacheDirectory << endl;
+            //  }
+            }
+            cout << "✅ Round Over" << endl; wait(1); clearScreen();
          }
     }; Data Round::Helpers::data;
     struct Game {
+        Round** currentRound;
         size_t roundsPlayed = 0, 
                correctGuesses = 0,
                amountOfOptions = 3;
-        Round** currentRound;
         Game() {
             
         }
@@ -315,12 +311,12 @@
             return *this;
         }
         void playRound() { ++roundsPlayed; 
-            amountOfOptions = (((roundsPlayed / 5) >= 1) ? ((roundsPlayed / 5) + 2) : 3);
+            amountOfOptions = (((roundsPlayed / 5) >= 1) ? ((roundsPlayed / 3) + 2) : 3);
             Round* round = new Round(amountOfOptions); currentRound = &round;
 
             // open flag image
             string command = "code ", //? use code/open as the command
-                   path = round->answerInfo.image;
+                   path = round->image;
             command += [&] -> string {
                 for (size_t i = 0; i < path.size(); ++i)
                     if (isspace(path.at(i))) 
@@ -330,7 +326,7 @@
             system(command.c_str());
             /*
             sf::RenderWindow w(sf::VideoMode({800, 600}), "Flag #" + to_string((roundsPlayed + 1)));
-            sf::Texture t; if (!t.loadFromFile(round->answerInfo.image)) throw runtime_error("Unable To Load Flag Image");
+            sf::Texture t; if (!t.loadFromFile(round->image)) throw runtime_error("Unable To Load Flag Image");
             sf::Sprite s(t);
             while (w.isOpen()) {
                 while (const auto e = w.pollEvent()) {
@@ -343,10 +339,12 @@
             }
             */
             // display (5) options // get input // acess input
-            if (round->correctGuess(round->displayOptionsAndGetValidAnswer())) ++correctGuesses;
-            else 
+            if (round->correctGuess(round->displayOptionsAndGetValidAnswer())) { ++correctGuesses;
+                 cout << "✅ Right Answer" << endl;
+            }
+            else cout << "❌ Wrong Answer" << endl;
 
-            delete round; currentRound = nullptr;
+            wait(1); delete round; currentRound = nullptr;
         }
         ~Game() {
             // free memory
