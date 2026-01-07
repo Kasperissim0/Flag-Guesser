@@ -1,5 +1,6 @@
 //§ Includes
     #include <cctype>
+    #include <cstddef>
     #include <cstdlib>
     #include <iterator>
     #include <optional>
@@ -34,14 +35,14 @@
 
             throw runtime_error("Unable to determine home directory");
         }(); 
-        clog << "The HOME Env Is: " << fullPath << endl;
         fullPath += "/Code/Projects/Flag Guesser/Cache";
-        clog << "Constructed cacheDirectory is: " << fullPath << endl;
-
         return fs::path(fullPath);
     }());
 //.
 //§ Classes
+    struct UserAnswer {
+        string code, name;
+    };
     struct Data {
         //§ Variables
         CURL* connection; CURLcode responseCode;
@@ -70,13 +71,11 @@
 
         Data() {
             curl_global_init(CURL_GLOBAL_DEFAULT); connection = curl_easy_init();
-            if (connection) clog << "✅ Curl Connection Established" << endl;
-            else            throw runtime_error("Unable To Establish Curl Connection");
+            if (!connection) throw runtime_error("Unable To Establish Curl Connection");
             curl_easy_setopt(connection, CURLOPT_WRITEFUNCTION, Data::dataProcessing);
             curl_easy_setopt(connection, CURLOPT_WRITEDATA, &rawResponse);
             curl_easy_setopt(connection, CURLOPT_FAILONERROR, 1L);
             curl_easy_setopt(connection, CURLOPT_FOLLOWLOCATION, 1L);
-            clog << "✅ Curl Connection Configured" << endl;
         }
         bool performRequest() noexcept {
             responseCode = curl_easy_perform(connection);
@@ -96,7 +95,7 @@
 
                 if (!fileContent.is_open()) throw runtime_error("Could Not Open " + pathToFile.string());
                 try {
-                    fileContent >> parsedResponse; clog << "✅ Cached Request Read" << endl;
+                    fileContent >> parsedResponse;
                     fileContent.close(); return parsedResponse;
                 }
                 catch (const json::parse_error& e) {
@@ -118,12 +117,12 @@
             else {
                 const string request = website + "/en/" + title; ofstream fileContent(pathToFile, ios::out);
 
-                curl_easy_setopt(connection, CURLOPT_URL, request.c_str());  clog << "✅ Curl Connection Reconfigured" << endl;
+                curl_easy_setopt(connection, CURLOPT_URL, request.c_str());
                 if (!performRequest())       throw runtime_error("Invalid Response Code Encountered");
                  if (!fileContent.is_open()) throw runtime_error("Could Not Open " + pathToFile.string()); 
                 try {
-                    parsedResponse = json::parse(rawResponse); clog << "✅ Request Parsed" << endl;
-                    fileContent << parsedResponse.dump(2); clog << "✅ Saved Country Codes To Cache" << endl;
+                    parsedResponse = json::parse(rawResponse);
+                    fileContent << parsedResponse.dump(2);
                     fileContent.close(); return parsedResponse;
                 }
                 catch (const json::parse_error& e) {
@@ -146,22 +145,14 @@
         fs::path getFlagImage(optional<string> countryCode = nullopt) {
             if (!countryCode) countryCode = Data::getRandomIterator(getCountryCodes()).key();
             const string extension = ".svg", request = website + "/" + *countryCode + extension; 
-            fs::path file([&]{
-                clog << "Saving To Directory: " << cacheDirectory << endl;
-                string fullPath = cacheDirectory.string() + "/" + *countryCode + extension;
-                clog << "Saving File To: " << fullPath << endl;
-                return fullPath;
-            }());
+            fs::path file(cacheDirectory.string() + "/" + *countryCode + extension);
 
             if (!fs::exists(file)) {
                 ofstream content(file, ios::trunc); rawResponse = "";
 
-                clog << "Making Request: " << request << endl;
                 curl_easy_setopt(connection, CURLOPT_URL, request.c_str()); if (!performRequest()) throw runtime_error("Invalid Response Code Encountered");
-                clog << "✅ Content Retrieved " << rawResponse << endl;
-
                 if (!content.is_open()) throw runtime_error("Could Not Open " + file.string());
-                content << rawResponse; clog << "✅ Content Written To " << file << endl;
+                content << rawResponse;
                 content.close();
 
             }
@@ -169,7 +160,6 @@
         }
         ~Data() noexcept {
             curl_global_cleanup(); curl_easy_cleanup(connection);
-            clog << "✅ Curl Connection Terminated" << endl;
         }
     };
     struct Round {
@@ -184,7 +174,7 @@
             } helpers;
             struct {
                 size_t amountOfChoices;
-                bool clearCreated = false, clearCache = false; // TODO Add Ways Of Setting This
+                bool clearCreated = true, clearCache = false; // TODO Add Ways Of Setting This
             } roundInfo;
             struct {
             fs::path image; 
@@ -196,7 +186,7 @@
             try {
                 const auto randomCode = Data::getRandomIterator(helpers.countryCodes());
                 answerInfo.image = helpers.data.getFlagImage(randomCode.key());
-                answerInfo.countryTitle = randomCode.value();
+                answerInfo.countryTitle = randomCode.value().get<string>();
                 answerInfo.countryCode = randomCode.key();
             } 
             catch (const runtime_error& e) {
@@ -206,17 +196,23 @@
             }
         }
         string displayOptionsAndGetValidAnswer () noexcept {
-            size_t correctAnswer = gen.generate<size_t>(0, roundInfo.amountOfChoices);
-            stringstream choiceOptions; string userChoice; vector<json::const_iterator> answerOptions = {};
+            size_t correctAnswer = gen.generate<size_t>(1, roundInfo.amountOfChoices);
+            stringstream choiceOptions; string userChoice; vector<UserAnswer> answerOptions(roundInfo.amountOfChoices);
 
-            cout << "Possible Answers: " << endl;
+            choiceOptions << endl << "Possible Answers: " << endl;
             for (size_t i = 0; i < roundInfo.amountOfChoices; ++i) {
-                const auto randomCountry = Data::getRandomIterator(helpers.countryCodes()); answerOptions.push_back(randomCountry);
-                choiceOptions << (i + 1) << ". " << ((i == correctAnswer) ? 
-                                            (answerInfo.countryTitle + " (" + answerInfo.countryCode + ")") : 
-                                            (to_string(randomCountry.value()) + " (" + randomCountry.key() + ")")) // randomCountry.value() should already be a string
-                                            << endl;                                                                 // but clangd gives a warning otherwise ¯\ _(ツ)_ /¯
-            } choiceOptions << endl << C; 
+                const auto randomCountry = Data::getRandomIterator(helpers.countryCodes());
+                const auto currentCode = ((i == correctAnswer) ? answerInfo.countryCode : randomCountry.key()),
+                           currentTitle = ((i == correctAnswer) ? answerInfo.countryTitle : randomCountry.value().get<string>());
+
+                // clog << "⚠️ Adding " << currentCode << " : " << currentTitle << endl;
+                answerOptions.at(i) = {currentCode, currentTitle};
+                choiceOptions << " " << to_string((i + 1)) << ". " 
+                              << currentTitle << " (" << currentCode << ")" << endl;
+            } choiceOptions   << endl << C;
+            // clog << "⚠️ Amount Of Iterators Saved: " << answerOptions.size() << endl
+            //      << "Specifically: " << endl;
+            // for (const auto& u : answerOptions) clog << "- " << u.code << " : " << u.name << endl;
             
             do {
                 userChoice = "";
@@ -225,7 +221,20 @@
                 bool validInput = false;
 
                 // 1. Input Is A Country Code OR 2. Input Is A Country Title
-                for (const auto& o : answerOptions) if (userChoice == o.key() || userChoice == to_string(o.value())) validInput = true;
+                //! for (const auto& u : answerOptions) if (userChoice == u.code || userChoice == u.name) validInput = true;
+                clog << "⚠️ User Input: " << userChoice << endl << endl;
+                for (const auto& u : answerOptions) {
+                    clog << "⚠️ Current JSON Value" << endl
+                         << "- " << u.code << " : " << u.name << endl;
+                    if (userChoice == u.code) {
+                        clog << "✅ Correct Input Since " << userChoice << " is equal to " << u.code << endl;
+                        validInput = true; break;
+                    }
+                    if (userChoice == u.name) {
+                        clog << "✅ Correct Input Since " << userChoice << " is equal to " << u.name << endl;
+                        validInput = true; break;
+                    }
+                }
                 // 3. Input Is a Number (Index From 1 to amountOfChoices)
                 string tempStorage = ""; size_t constructedNumber;
                 for (const auto& c : userChoice) if (isdigit(c)) tempStorage.push_back(c);
@@ -236,14 +245,23 @@
 
                 if (!validInput) {
                     cout << endl << "❌ Invalid Input Entered" << endl;
-                    wait(3); clearScreen();
+                    // wait(3); clearScreen();
                 }
                 return validInput;
             }());
+            clog << "✅ Returning Value: " << userChoice << endl;
             return userChoice;
         }
         bool correctGuess(const string&& choice) noexcept {
-            if (answerInfo.countryCode == choice || answerInfo.countryTitle == choice)                                                      return true;
+            clog << "⚠️ Processing User Guess: " << choice << endl << endl
+                 << "⚠️ Correct Answers Include: " << endl
+                 << "- " << answerInfo.countryCode << endl
+                 << "- " << answerInfo.countryTitle << endl
+                 << "- " << "1-" << (this->roundInfo.amountOfChoices - 1) << endl;
+            if (answerInfo.countryCode == choice || answerInfo.countryTitle == choice) {
+                clog << "✅ The Users Guess Was Correct" << endl;
+                return true;
+            }
 
             auto objectIndex = helpers.countryCodes().begin(); optional<size_t> advanceBy = nullopt;
             try {
@@ -251,26 +269,31 @@
                 advance(objectIndex, *advanceBy); 
             } catch (...) { cerr << E << "Invalid Index Passed" << endl; }
 
-            if (advanceBy && (answerInfo.countryCode == objectIndex.key() || answerInfo.countryTitle == to_string(objectIndex.value())))   return true;
-            
+            if (advanceBy && (answerInfo.countryCode == objectIndex.key() || answerInfo.countryTitle == objectIndex.value().get<string>())) {
+                clog << "✅ The Users Guess Was Correct" << endl;
+                return true;
+            }
+            clog << "❌ The Users Guess Was NOT Correct" << endl;
             return false;
         }
          ~Round() {
            error_code e; uintmax_t filesDeleted; char temp;
             
-           if (roundInfo.clearCreated) {
-            cout << "Are You Sure You Want To Delete " << answerInfo.image << " (y/n)" << endl << C; cin >> temp;
-            if (temp == 'y') {
+            if (roundInfo.clearCreated) {
+           //  cout << "Are You Sure You Want To Delete " << answerInfo.image << " (y/n)" << endl << C; cin >> temp;
+           //  if (temp == 'y') {
                 if (!fs::remove(answerInfo.image, e) && e) cerr << E << "Failed To Delete, Since: " << e.message() << endl;
-                else clog << "✅ Successfully Deleted " << answerInfo.image << endl;
-            }
-           } 
+                else cout << "✅ Successfully Deleted " << answerInfo.image << endl;
+           //  }
+            } 
            else if (roundInfo.clearCache) {
                 cout << "Are You Sure You Want To Delete The Entire Contents Of Your Cache? (y/n)" << endl << C; cin >> temp;
-                if (temp == 'y') filesDeleted = fs::remove_all(cacheDirectory, e);
-                cout << "Removed " << filesDeleted << "Items From " << cacheDirectory << endl;
+                if (temp == 'y') {
+                    filesDeleted = fs::remove_all(cacheDirectory, e);
+                    cout << "✅Removed " << filesDeleted << " Items From " << cacheDirectory << endl;
+                }
             }
-            clog << "✅ Round Over" << endl;
+            cout << "✅ Round Over" << endl;
          }
     }; Data Round::Helpers::data;
     struct Game {
@@ -279,10 +302,16 @@
                amountOfOptions = 3;
         Round** currentRound;
         Game() {
-
+            
         }
-        Game& displayInterface () {
-
+        Game& displayInterface () { // clearScreen();
+            const string line = "------";
+            cout << line << endl << line << endl
+                 << "Games Played: " << roundsPlayed << endl 
+                 << "Games Won: " << correctGuesses << endl
+                 << "Win Percentage: " 
+                 << (correctGuesses == 0 ? 0 : ((static_cast<double>(correctGuesses) / static_cast<double>(roundsPlayed)) * 100 )) << "%" << endl
+                 << line << endl << line << endl;
             return *this;
         }
         void playRound() { ++roundsPlayed; 
@@ -298,7 +327,6 @@
                         path.insert((path.begin() + i++), '\\');
                 return path;
             }();
-            clog << endl << "Running Command: " << command << endl;
             system(command.c_str());
             /*
             sf::RenderWindow w(sf::VideoMode({800, 600}), "Flag #" + to_string((roundsPlayed + 1)));
